@@ -1,0 +1,306 @@
+#===============================================================
+#                     ENVIRONMENT VARIABLES
+#===============================================================
+x-postgres-cinemax-env: &postgres-cinemax-env
+  POSTGRES_HOST: postgres_cinemax
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: cinemax_database
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+
+x-postgres-users-env: &postgres-users-env
+  POSTGRES_HOST: postgres_users
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: users_database
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+
+x-postgres-notifications-env: &postgres-notifications-env
+  POSTGRES_HOST: postgres_notifications
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: notifications_database
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+
+x-redis-env: &redis-env
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+
+x-elastic-env: &elastic-env
+  ELASTIC_HOST: elastic
+  ELASTIC_PORT: 9200
+
+x-mongo-env: &mongo-env
+  MONGO_HOST: mongo
+  MONGO_PORT: 27017
+
+x-kafka-env: &kafka-env
+  KAFKA_HOST: kafka
+  KAFKA_PORT: 9092
+
+x-django-env: &django-env
+  DJANGO_SUPERUSER_USERNAME: admin
+  DJANGO_SUPERUSER_EMAIL: admin@mail.ru
+  DJANGO_SUPERUSER_PASSWORD: 1234
+
+x-logstash-env: &logstash-env
+  LOGSTASH_HOST: logstash
+
+x-clickhouse-env: &clickhouse-env
+  CLICKHOUSE_HOST: clickhouse-node1
+  CLICKHOUSE_PORT: 9000
+
+services:
+  #===============================================================
+  #                          DATASTORES
+  #===============================================================
+  postgres_cinemax:
+    image: postgres:14.5-alpine
+    expose:
+      - 5432
+    volumes:
+      - ./data/cinemax_database.sql:/docker-entrypoint-initdb.d/cinemax_database.sql
+    environment:
+      <<: *postgres-cinemax-env
+
+  postgres_users:
+    image: postgres:14.5-alpine
+    expose:
+      - 5432
+    environment:
+      <<: *postgres-users-env
+
+  postgres_notifications:
+    image: postgres:14.5-alpine
+    expose:
+      - 5432
+    environment:
+      <<: *postgres-notifications-env
+
+  redis:
+    image: redis:7.0.5
+    expose:
+      - 6379
+
+  elastic:
+    image: elasticsearch:7.17.8
+    expose:
+      - 9200
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: False
+      ES_JAVA_OPTS: -Xms1024m -Xmx1024m
+
+  mongo:
+    image: mongo:6.0.4
+    expose:
+      - 27017
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.1
+    expose:
+      - 29092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+
+  clickhouse-node1:
+    image: clickhouse/clickhouse-server:22.12
+    expose:
+      - 8123
+      - 9000
+    volumes:
+      - ./data/node1:/etc/clickhouse-server
+      - ./data/shard1.sql:/docker-entrypoint-initdb.d/init.sql
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+  clickhouse-node2:
+    image: clickhouse/clickhouse-server:22.12
+    volumes:
+      - ./data/node2:/etc/clickhouse-server
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+  clickhouse-node3:
+    image: clickhouse/clickhouse-server:22.12
+    volumes:
+      - ./data/node3:/etc/clickhouse-server
+      - ./data/shard2.sql:/docker-entrypoint-initdb.d/init.sql
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+  clickhouse-node4:
+    image: clickhouse/clickhouse-server:22.12
+    volumes:
+      - ./data/node4:/etc/clickhouse-server
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  zookeeper:
+    image: zookeeper:3.8
+    healthcheck:
+      test: nc -z localhost 2181 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  #===============================================================
+  #                         APPLICATIONS
+  #===============================================================
+  django_admin_panel:
+    image: temirovazat/django_admin_panel:1.0.0
+    volumes:
+      - static_value:/opt/django_admin_panel/static/
+      - media_value:/opt/django_admin_panel/media/
+    environment:
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,[::1],django_admin_panel
+      DJANGO_SECRET_KEY: django-insecure-_o)z83b+i@jfjzbof_jn9#%dw*5q2yy3r6zzq-3azof#(vkf!#
+      << : [*django-env, *postgres-cinemax-env]
+
+  sqlite_to_postgres:
+    image: temirovazat/sqlite_to_postgres:1.0.0
+    volumes:
+      - ./data/cinemax.sqlite:/opt/sqilte_to_postgres/cinemax.sqlite
+    environment:
+      SQLITE_PATH: /opt/sqilte_to_postgres/cinemax.sqlite
+      << : *postgres-cinemax-env
+
+  postgres_to_elastic:
+    image: temirovazat/postgres_to_elastic:1.0.0
+    environment:
+      << : [*postgres-cinemax-env, *elastic-env, *redis-env]
+    depends_on:
+      sqlite_to_postgres:
+        condition: service_completed_successfully
+
+  async_api:
+    image: temirovazat/async_api:1.0.0
+    environment:
+      FASTAPI_DEBUG: True
+      FASTAPI_DOCS: 'cinemax'
+      LOGSTASH_PORT: 5044
+      << : [*elastic-env, *redis-env, *logstash-env]
+
+  auth:
+    image: temirovazat/auth_api:1.0.0
+    volumes:
+      - flask_static:/usr/local/lib/python3.10/site-packages/flask_apispec   
+    environment:
+      FLASK_DOCS: 'auth'
+      LOGSTASH_PORT: 5045
+      << : [*postgres-users-env, *redis-env, *logstash-env]
+
+  event_sourcing:
+    image: temirovazat/event_sourcing:1.0.0
+    environment:
+      << : *kafka-env
+
+  kafka_to_clickhouse:
+    image: temirovazat/kafka_to_clickhouse:1.0.0
+    restart: always
+    environment:
+      CLICKHOUSE_HTTP_PORT: 8123
+      << : [*kafka-env, *clickhouse-env]
+
+  ugc:
+    image: temirovazat/ugc_api:1.0.0
+    environment:
+      FASTAPI_DOCS: 'ugc'
+      FASTAPI_DEBUG: True
+      LOGSTASH_PORT: 5046
+      << : [*mongo-env, *logstash-env]
+
+  notifications_admin:
+    image: temirovazat/notifications_admin:1.0.0
+    volumes:
+      - static_value:/opt/notifications_admin/static/
+      - media_value:/opt/notifications_admin/media/
+    environment:
+      EVENT_SOURCING_URL: notifications_api:8000
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,[::1],notifications_admin
+      DJANGO_SECRET_KEY: django-insecure-)%ceik*k#kl+x1tc!_=*n64=88gev=m(j!@c8r-e63q3e^58mo
+      << : [*django-env, *postgres-notifications-env, *redis-env]
+
+  notifications_scheduler:
+    image: temirovazat/notifications_admin:1.0.0
+    entrypoint: >
+      sh -c "celery -A core worker --beat --loglevel=info"
+    environment:
+      << : [*postgres-notifications-env, *redis-env]
+
+  notifications_api:
+    image: temirovazat/notifications_api:1.0.0
+    environment:
+      << : *kafka-env
+
+  notifications_worker:
+    image: temirovazat/notifications_worker:1.0.0
+    environment:
+      ADMIN_URL: notifications_admin:8000
+      << : *kafka-env
+
+  #===============================================================
+  #                         LOGGING (ELK)
+  #===============================================================
+  elasticsearch:
+    image: elasticsearch:7.17.8
+    expose:
+      - 9200
+    environment:
+      discovery.type: single-node
+
+  logstash:
+    image: logstash:7.17.8
+    expose:
+      - 5044/udp
+    environment:
+      XPACK_MONITORING_ENABLED: "false"
+      ELK_ELASTIC_HOST: elasticsearch
+      ELK_ELASTIC_PORT: 9200
+    volumes:
+      - ./data/logstash.conf:/config/logstash.conf:ro
+      - /tmp/logs/nginx/:/var/log/nginx/:ro
+    command: logstash -f /config/logstash.conf
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: kibana:7.17.8
+    ports:
+      - 5601:5601
+    depends_on:
+      - elasticsearch
+
+  #===============================================================
+  #                         WEB SERVER
+  #===============================================================
+  nginx:
+    image: nginx:1.23.2
+    ports:
+      - 80:80
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf
+      - /tmp/logs/nginx/:/var/log/nginx/
+      - static_value:/var/www/static/
+      - media_value:/var/www/media/
+      - flask_static:/var/www/flask-apispec/
+    depends_on:
+      - django_admin_panel
+      - async_api
+      - auth
+      - ugc
+      - notifications_admin
+
+volumes:
+  static_value:
+  media_value:
+  flask_static:

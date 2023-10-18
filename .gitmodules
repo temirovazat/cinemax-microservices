@@ -1,0 +1,24 @@
+[submodule "cinemax_admin_panel"]
+	path = cinemax_admin_panel
+	url = git@github.com:temirovazat/cinemax-admin-panel.git
+[submodule "cinemax_sqlite_to_postgres"]
+	path = cinemax_sqlite_to_postgres
+	url = git@github.com:temirovazat/sqlite-to-postgres.git
+[submodule "cinemax_postgres_to_elk"]
+	path = cinemax_postgres_to_elk
+	url = git@github.com:temirovazat/postgres-to-elk.git
+[submodule "cinemax_async_api"]
+	path = cinemax_async_api
+	url = git@github.com:temirovazat/cinemax-async-api.git
+[submodule "cinemax_auth"]
+	path = cinemax_auth
+	url = git@github.com:temirovazat/cinemax-auth.git
+[submodule "cinemax_kafka_to_clickhouse"]
+	path = cinemax_kafka_to_clickhouse
+	url = git@github.com:temirovazat/kafka-to-clickhouse.git
+[submodule "cinemax_ugc"]
+	path = cinemax_ugc
+	url = git@github.com:temirovazat/cinemax-ugc.git
+[submodule "cinemax_notifications"]
+	path = cinemax_notifications
+	url = git@github.com:temirovazat/cinemax-notifications.git
